@@ -84,6 +84,14 @@ class ImaginationEnvironment(gym.Env):
             self.power = self.scaleUp()
             #self.scaleUp();
         if action == 2 :
+            print ("Scale Out")
+            self.power = self.scaleOut()
+            #self.scaleOut();
+        if action == 3 :
+            print ("Scale In")
+            self.power = self.scaleIn()
+            #self.scaleUp();
+        if action == 4 :
             print ("Do nothing")
 
         #print ("Post : ",self.energy[self.count]," : ")
@@ -118,6 +126,24 @@ class ImaginationEnvironment(gym.Env):
 
         return temp
 
+    def scaleOut(self):
+        #self.power = self.power * 1.2
+        try:
+            temp = self.simulation.scaleOut(self.currentId)
+        except:
+            temp = 0
+
+        return temp
+    
+    def scaleIn(self):
+        #self.power = self.power * 1.2
+        try:
+            temp = self.simulation.scaleIn(self.currentId)
+        except:
+            temp = 0
+
+        return temp
+
     def reset(self):
         self.done = False
         self.count = -1;
@@ -140,11 +166,11 @@ class ImaginationEnvironment(gym.Env):
             mod = -1
         elif self.power <= maxthreshold and self.power >= minthreshold:
             mod = 1
-        elif self.power < minthreshold :
+        elif self.power < minthreshold:
             mod = -1
 
         #Additional
-        if self.left <= 1000:       
+        if self.left <= 1000:
             mod += 2
         if self.power > self.maxSLA or self.power < self.minSLA:
             mod -= 2
