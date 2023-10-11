@@ -9,7 +9,7 @@ from tkinter import messagebox;
 
 from py4j.java_gateway import JavaGateway
 from actor_critics import ActorCritic
-from environment import ImaginationEnvironment
+from environment import ExperienceEnvironment
 from Functional import softmax
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,8 +17,10 @@ from matplotlib.figure import Figure
 from py4j.java_gateway import (JavaGateway, CallbackServerParameters)
 from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg, NavigationToolbar2Tk)
 #from plot_script import plot_result
-
-######### COPY
+tf.config.threading.set_inter_op_parallelism_threads(
+    2
+)
+from tqdm import tqdm
 import time as t
 import nest_asyncio
 nest_asyncio.apply()
@@ -46,7 +48,7 @@ def callback(actor):
 '''looping for worker training'''
 def wrapper(loop,*args):
     callback(loop.run_until_complete(critic_train(*args)))
-############################copy
+
 
 class RLEDCSS(object):
     start = False;
@@ -56,7 +58,7 @@ class RLEDCSS(object):
     action = 0
     sla_violation = 0
     agent_call = 0
-    setParam = "1,2,4,50,30,3600"
+   # setParam = "1,2,4,50,30,3600"
     def checkConnection(self, msg = "|"):
         #return(msg, " | Check Python")
         return "Said hello from Python called by Java {0}".format(msg)
@@ -84,7 +86,7 @@ class RLEDCSS(object):
 
     def setAgentCallNumber(self, agent_call):
         self.agent_call = agent_call
-
+    
     def simulationStart(self):
         return self.start;
 
@@ -106,14 +108,14 @@ class RLEDCSS(object):
 masterActor = None
 
 
-async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
+async def critic_train(actor, trainDepth, experienceEnv, gm, gateway, ax):
     # Actor will be initialized first before training
-    # actor = ActorCritic(replayEnv, params)   
+    # actor = ActorCritic(experienceEnv, params)   
     global masterActor
     
     if masterActor is None:
-        masterActor = ActorCritic(replayEnv, params)
-    actor = ActorCritic(replayEnv, params)
+        masterActor = ActorCritic(experienceEnv, params)
+    actor = ActorCritic(experienceEnv, params)
 
     actor.model = tf.keras.models.clone_model(
         masterActor.model, input_tensors=None, clone_function=None
@@ -121,15 +123,14 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
                       
     
     # Initialize CSP connection Enviroment
-    imagineEnv.getSimulation(gateway);
-
-    # This variable is used to ping/pong the annotation NO LONGER USED
+    trainingEnv.getSimulation(gateway);
 
     # This variable is used to mark the graph
     num_g = 1
     
     sum_of_rewards = []
     sum_of_losses = []
+    sum_of_powers = []
 
     max_steps = 10000
 
@@ -137,22 +138,31 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
     sum_sla_violation = 0
     sum_agent_call = 0
 
+
     ann_list = []
     #x = np.array([0], dtype = np.float32)
     #y = np.array([0], dtype = np.float32)
 
     x2 = np.array([0], dtype = np.float32)
     y2 = np.array([0], dtype = np.float32)
+
     
-    #rollout = RolloutStorage(max_steps, replayEnv.state_space.shape)
+    #x3 = np.array([0], dtype = np.float32)
+    #y3 = np.array([0], dtype = np.float32)
+    
+    #rollout = RolloutStorage(max_steps, experienceEnv.state_space.shape)
 
     #Line 11
-    for e in range(replayDepth):
-        state = replayEnv.reset()
-        state = convert_target_to_real_state(state, replayEnv.state_space)
+    for e in range(trainDepth):
+        print("#"*24)
+        print(f"depth: {e}")
+        print("#"*24)
+        state = experienceEnv.reset()
+        state = convert_target_to_real_state(state, experienceEnv.state_space)
         score = 0
         count = 0
-        max_steps = 10000
+        energy= 0
+        max_steps = 200
 
         x = np.array([0], dtype = np.float32)
         y = np.array([0], dtype = np.float32)
@@ -175,39 +185,44 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
             read more about lambda PYTHON function
         '''
         rledcss.setSimulationDone(False)
+        start = t.monotonic()
         if rledcss.simulationStart:
-            for i in range(max_steps):
+            tbar = tqdm(range(max_steps))
+            for i in tbar:
                 count += 1
                 
-                # The state imagine the 'future'
-                replay= actor.imagine(state)
-                #imagine_action = np.argmax(replay[0])
+                experience= actor.train(state)
+                #train_action = np.argmax(experience[0])
                 
-                #action = actor.act(state, imagine_state)
+                #action = actor.act(state, train_state)
                 #action = actor.act(state)
                 
                 prev_state = state
-                next_state, reward, done, _ = replayEnv.step(replay)
-                #next_state, reward, _ = replayEnv.step(imagine_action)
+                next_state, reward, done, _ = experienceEnv.step(experience)
+                #next_state, power, reward, _ = experienceEnv.step(train_action)
                 score += reward
-
-                next_state = convert_target_to_real_state(next_state, replayEnv.state_space)
-                #replayEnv.done = rledcss.done
-                actor.remember(state, replay, reward, next_state, done)
-                #rollout.insert(i, state, imagine_action, reward)
+                #energy += power
+               
+                tbar.set_postfix_str(s=str(experience))
+                
+                next_state = convert_target_to_real_state(next_state, experienceEnv.state_space)
+                #experienceEnv.done = rledcss.done
+                #actor.remember(state, experience, reward, next_state, done)
+                #rollout.insert(i, state, train_action, reward)
                 state = next_state
 
                 #print(f'Score {score}')
 
                 # Set Graph attribute (graph1)
-                #time2 = replayEnv.getTime()
+                #time2 = experienceEnv.getTime()
                 #time2 += 1
 
                 
                 ln.set_color('red')
                 #x = np.append(x , float(count))
-                #x = np.append(x , float(ImaginationEnvironment.getTime()))
-                x = np.append(x , float(replayEnv.getTime()))
+                #x = np.append(x , float(ExperienceEnvironment.getTime()))
+                # x = np.append(x , float(experienceEnv.getTime()))
+                x = np.append(x , float(t.monotonic()-start))
                 y = np.append(y , float(reward))
                 ln.set_xdata(x)
                 ln.set_ydata(y)
@@ -216,14 +231,15 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
 
                 # Windowed graph view
             
-                if replayEnv.getTime() < replayDepth:
-                    ax[0].set_xlim(0, replayDepth + replayEnv.getTime())
+                ax[0].set_xlim(0, trainDepth + x[-1])
+                # if experienceEnv.getTime() < trainDepth:
+                #     ax[0].set_xlim(0, trainDepth + experienceEnv.getTime())
 
-                else:
-                    ax[0].set_xlim(replayEnv.getTime() - replayDepth, replayDepth + replayEnv.getTime() - 45)
-                    plt.draw()
+                # else:
+                #     ax[0].set_xlim(experienceEnv.getTime() - trainDepth, trainDepth + experienceEnv.getTime() - 45)
+                plt.draw()
                 
-                fr_number.set_text("Simulation Cycle : {e}".format(e=e+1))
+                fr_number.set_text("Episode : {e}".format(e=e+1))
                 
                 # update graph maker
                # if i%2000 == 0:
@@ -232,18 +248,18 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
                 if rledcss.activated:
                     rledcss.setAgentActivated(False)
                     #action = actor.act(next_state, imagination) 
-                    action = actor.imagine(state)             
-                    #rledcss.setAgentAction(action)
+                    action = actor.train(state)             
+                    rledcss.setAgentAction(action)
                     #plt.plot(count,0, 'ro')
                     #c = convert_action_toReadable(action)
                     #m *= -1
-                    ann = ax[0].annotate("Agent Called", (replayEnv.getTime(), reward), arrowprops=dict(facecolor='black', shrink=0.05))
+                    ann = ax[0].annotate("Agent Called", (x[-1], reward), arrowprops=dict(facecolor='black', shrink=0.05))
                     ann_list.append(ann)
                     plt.draw()
                     #print("Action ",action)
                 # if params['batch_size'] > 1:
                 #     t.sleep(1)
-                #     actor.replay()
+                #     actor.experience()
                 if rledcss.done:
                     rledcss.setSimulationReady(True)
                     #plt.removeAll()
@@ -251,10 +267,9 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
                         a.remove()
                     ann_list[:] = []
 
-                    x2 = np.append(x2 , float(e+1))
-                    y2 = np.append(y2 , float(score))
-                    ax[1].plot(x2, y2)
-                    plt.draw()
+                    
+
+               
                     #gm.setPreviousLineToDiff()
 
 
@@ -267,7 +282,7 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
                         AS OF 11 / 05 / 2021
                         MULTI COLOUR LINE is no longer functioning
                     '''
-                    #print("Time : ",replayEnv.getTime())
+                    #print("Time : ",experienceEnv.getTime())
                     #plt.cla()
                     #gm.removeAllArt()
                     #x = np.array([0], dtype = np.float32)
@@ -282,28 +297,38 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
                     sum_sla_violation += rledcss.sla_violation
                     sum_agent_call += rledcss.agent_call
                     # Only allow the system to edit the log field
+
                     '''sidebar information'''
                     text_area.configure(state="normal")
-                    text_area.insert('insert',f'{e+1}/{replayDepth}: {round(score,2)} : {rledcss.agent_call} : {rledcss.sla_violation}' + '\n')
-                    #text_area.insert('insert',f'{e+1}/{replayDepth}: {round(score,2)} : {rledcss.agent_call} : {rledcss.sla_violation}' + '\n')
+                    text_area.insert('insert',f'{e+1}/{trainDepth}: {round(score,2)} : {rledcss.agent_call} : {rledcss.sla_violation}' + '\n')
+                    #text_area.insert('insert',f'{e+1}/{trainDepth}: {round(score,2)} : {rledcss.agent_call} : {rledcss.sla_violation}' + '\n')
                     text_area.configure(state="disabled")
                     text_area.see("end")
-                    #actor.remember(state, imagine_action, reward, next_state, True)
-                    actor.remember(state, replay, reward, next_state, True)
+                    #actor.remember(state, train_action, reward, next_state, True)
+                    #actor.remember(state, experience, reward, next_state, True)
                     #print(f'Final Cloud State: {str(prev_state)}')
-                    #print(f'Imagination Depth: {e+1}/{replayDepth}, Score: {score}')
-                    if (e + 1) == ((replayDepth / 10) * num_g):
-                        plt.savefig(f'Graph {e+1}_{replayDepth}')
+                    #print(f'Imagination Depth: {e+1}/{trainDepth}, Score: {score}')
+                    if (e + 1) == ((trainDepth / 10) * num_g):
+                        plt.savefig(f'Graph {e+1}_{trainDepth}')
                         num_g += 1
                     break
             #end mark: for i in range(max_steps)
+            x2 = np.append(x2 , float(e+1))
+            y2 = np.append(y2 , float(score))
+            ax[1].plot(x2, y2)
+            plt.draw()
+
+            #x3 = np.append(x3 , float(e+1))
+            #y3 = np.append(y3 , float(power))
+            #ax[1].plot(x3, y3)
+            #plt.draw()
         #returns = rollout.compute_returns(next_state, params["gamma"])
         sum_of_rewards.append(score)
         #print(f'Returns : {returns}')
     rledcss.setSimulationStart(False)
     maxRank = max(y2)
     totalReward = sum(sum_of_rewards)
-    lrt = maxRank - totalReward/replayDepth
+    lrt = maxRank - totalReward/trainDepth
 
     text_area_lrt.config(state="normal")
     text_area_lrt.insert('insert',f'LRT : {round(lrt, 2)}'+ '\n')
@@ -311,27 +336,27 @@ async def critic_train(actor, replayDepth, replayEnv, gm, gateway, ax):
     text_area_lrt.insert('insert',f'Total Reward : {round(totalReward, 2)}'+ '\n')
     text_area_lrt.insert('insert',f'Total Agent Call : {sum_agent_call}'+ '\n')
     text_area_lrt.insert('insert',f'Total SLA Violation : {sum_sla_violation}'+ '\n')
-    #text_area_lrt.insert('insert',f'Total Simulation Time : {replayEnv.getTime()}'+ '\n')
+    #text_area_lrt.insert('insert',f'Total Simulation Time : {experienceEnv.getTime()}'+ '\n')
     text_area_lrt.configure(state="disabled")
     print("Sum of Reward : ", sum(sum_of_rewards))
     print("Total Agent Call :", sum_agent_call) #A-add
     print("Total SLA violation :", sum_sla_violation) #A-add
-    print("Simulated Time :", replayEnv.getTime()) #A-add
+    print("Simulated Time :", experienceEnv.getTime()) #A-add
 
     plt.savefig('Complete Graph')
     return actor
 
 def convert_action_toReadable(action):
     if action == 0:
-        return "Called:Scale Down";
-    if action == 1:
-        return "Called:Scale Up";
-    if action == 2:
         return "Called:Scale Out";
-    if action == 3:
-            return "Called:Scale In";
-    if action == 4:
-            return "Called:No Action";
+    if action == 1:
+        return "Called:Scale In";
+    if action == 2:
+        return "Called:No Action";
+    #if action == 3:
+     #       return "Called:Scale In";
+    #if action == 4:
+     #       return "Called:No Action";
 
 def convert_target_to_real_state(next_state, state_space):
     _state = next_state
@@ -350,7 +375,7 @@ def delayUntilReady():
             return True
     return False
 
-def buttonFunction(actor, replayDepth, replayEnv, gm, gateway, host, vm, cloudlet, maxPower, idlePower, time, ax):
+def buttonFunction(actor, trainDepth, experienceEnv, gm, gateway, host, vm, cloudlet, maxPower, idlePower, time, ax):
     '''
         Set the param first/before starting simulation to avoid catching the default sets 
     '''
@@ -368,20 +393,18 @@ def buttonFunction(actor, replayDepth, replayEnv, gm, gateway, host, vm, cloudle
     This is to delay Python while waiting for CloudSim Plus to create VMs, Host, Datacenter, broker and etc.
     '''
         
-    # critic_train(actor, int(replayDepth), replayEnv, gm, gateway, ax)
-    '''
-    This is to delay Python while waiting for CloudSim Plus to create VMs, Host, Datacenter, broker and etc.
-    '''
+    # critic_train(actor, int(trainDepth),experienceEnv , gm, gateway, ax)
+   
 
     loop = asyncio.get_event_loop()
     all_threads = []
     #berapa number thread nak / async(launch sekali semua)
-    for i in range(2):
-        thr = threading.Thread(target=wrapper,args=(loop, actor, int(replayDepth), replayEnv, gm,gateway,ax))
+    for i in range(1):
+        thr = threading.Thread(target=wrapper,args=(loop, actor, int(trainDepth), experienceEnv, gm,gateway,ax))
         thr.start()
         all_threads.append(thr)
     # [i.join() for i in all_threads] 
-    # thr = threading.Thread(target=wrapper,args=(loop, actor, int(replayDepth), replayEnv, gm,gateway,ax))
+    # thr = threading.Thread(target=wrapper,args=(loop, actor, int(trainDepth), experienceEnv, gm,gateway,ax))
     # thr.start()
     print("Done")
     rledcss.setSimulationStart(False)
@@ -426,7 +449,7 @@ if __name__ == '__main__':
 
     results = dict()
     
-    replayDepth = 50
+    trainDepth = 50
 
      # Set imagination observation info
     imaginationInfos = {'States: Minimum Threshold': {'state_space':''},
@@ -438,7 +461,7 @@ if __name__ == '__main__':
                         'States: MIPS left':{'state_space':''},
                         'States: Zero Power usage':{'state_space':''}}
     
-    imagineEnv = ImaginationEnvironment(1)
+    trainingEnv = ExperienceEnvironment(1)
 
     # Established connection with JAVA first
     '''
@@ -467,14 +490,14 @@ if __name__ == '__main__':
         auto_convert=True,
         python_server_entry_point=rledcss)
 
-    actor = ActorCritic(imagineEnv, params)
+    actor = ActorCritic(trainingEnv, params)
     #GUI
-    # Build the Window
+   # Build the Window
     window = tkinter.Tk();
     winStyle = ttk.Style();
     winStyle.theme_use('clam');
     window.title("Cloud Auto Scaler");
-    window.geometry("1000x750");
+    window.geometry("1080x640");
     window.configure(background = '#03254C');
     window.resizable(0,0);
     window.focus_set();
@@ -511,7 +534,7 @@ if __name__ == '__main__':
     
     # Set the current graph 
     ax[0].set_ylim(-3, 3)
-    ax[0].set_xlim(0,replayDepth)
+    ax[0].set_xlim(0,trainDepth)
     #plt.suptitle("Current")
     ax[0].set_ylabel("Reward")
     ax[0].set_xlabel("Simulation Time")
@@ -531,7 +554,13 @@ if __name__ == '__main__':
     ax[1].plot(x,y, color="red", animated=True)
 
     ax[1].set_ylabel("Total Reward")
-    ax[1].set_xlabel("Simulation Cycle")
+    ax[1].set_xlabel("Simulation Episode")
+
+    #ax[2].plot(x,y, color="blue", animated=True)
+
+    #ax[2].set_ylabel("Power")
+    #ax[2].set_xlabel("Simulation Episode")
+
 
     # Init artist to draw
     canvas.draw();
@@ -544,16 +573,16 @@ if __name__ == '__main__':
     #plt.show(block = False)
 
     #Create ScrolledText
-    text_area = scrolledtext.ScrolledText(window, wrap = tkinter.WORD, width = 20, height = 23, font = ("Courier New",15))
+    text_area = scrolledtext.ScrolledText(window, wrap = tkinter.WORD, width = 41, height = 23, font = ("Courier New",15))
     text_area.configure(state="disabled")
     #text_area.pack(side="right")
-    text_area.place(x=800, y=0)
+    text_area.place(x=640, y=0)
 
-    text_area_lrt = scrolledtext.ScrolledText(window, wrap = tkinter.WORD, width = 20, height = 8, font = ("Courier New",14))
+    text_area_lrt = scrolledtext.ScrolledText(window, wrap = tkinter.WORD, width = 41, height = 8, font = ("Courier New",14))
     text_area_lrt.insert('insert','SIMULATION SUMMARY\n')
     text_area_lrt.configure(state="disabled")
     #text_area.pack(side="right")
-    text_area_lrt.place(x=800, y=500)
+    text_area_lrt.place(x=640, y=485)
 
     # Create the String variables first
     host = tkinter.StringVar()
@@ -566,79 +595,72 @@ if __name__ == '__main__':
     # Create the button for 
     #plot_button = Button(master = window, command = testButtonFunction, height = 3, width = 20,text = "Start Simulation")
     #lambda: action(someNumber)
-    start_button = Button(master = window, command = lambda: buttonFunction(actor,episode.get(), imagineEnv, gm, gateway,host, vm, cloudlet, maxPower, idlePower, time, ax), height = 3, width = 20,text = "Start Simulation")
-    start_button.place(x=700, y=670)
+    start_button = Button(master = window, command = lambda: buttonFunction(actor,episode.get(), trainingEnv, gm, gateway,host, vm, cloudlet, maxPower, idlePower, time, ax), height = 3, width = 20,text = "Start Simulation")
+    start_button.place(x=0, y=570)
 
     guiL = Label(window, text="Simulation Parameter Setting")
     #guiL.pack(side="top")
-    guiL.place(x=100, y=665)
+    guiL.place(x=230, y=510)
     
 
     # Add Reinforcement Learning Settings
     episode = tkinter.StringVar()
-    episodeL = Label(window, width = 6, text="Cycle")
+    episodeL = Label(window, width = 6, text="Episode")
     #episodeL.pack(side="left")
-    episodeL.place(x=3, y=700)
+    episodeL.place(x=3, y=540)
     episodeT = ttk.Entry(window, width = 5, textvariable = episode)
     episodeT.insert("insert", "50")
     #episodeT.pack(side="left")
-    episodeT.place(x=51, y=700)
+    episodeT.place(x=51, y=540)
 
     hostL = Label(window, width = 6, text="Host")
     #hostL.pack(side="left")
-    hostL.place(x=80, y = 700)
+    hostL.place(x=80, y = 540)
     hostT = ttk.Entry(window, width = 5, textvariable = host)
     hostT.insert("insert", "1")
     #hostT.pack(side="left")
-    hostT.place(x=125, y=700)
+    hostT.place(x=125, y=540)
 
     vmL = Label(window, width = 6, text="VM(s)")
     #vmL.pack(side="left")
-    vmL.place(x=160, y=700)
+    vmL.place(x=160, y=540)
     vmT = ttk.Entry(window, width = 5, textvariable = vm)
     vmT.insert("insert", "2")
     #vmT.pack(side="left")
-    vmT.place(x=205, y=700)
+    vmT.place(x=205, y=540)
 
     cloudletL = Label(window, width = 8, text="Cloudlet")
     #cloudletL.pack(side="left")
-    cloudletL.place(x=240, y=700)
+    cloudletL.place(x=240, y=540)
     cloudletT = ttk.Entry(window, width = 5, textvariable = cloudlet)
     cloudletT.insert("insert", "4")
     #cloudletT.pack(side="left")
-    cloudletT.place(x=300, y=700)
+    cloudletT.place(x=300, y=540)
 
     maxPowerL = Label(window, width = 9,text="Max Power")
     #maxPowerL.pack(side="left")
-    maxPowerL.place(x=335, y=700)
+    maxPowerL.place(x=335, y=540)
     maxPowerT = ttk.Entry(window, width = 5, textvariable = maxPower)
     maxPowerT.insert("insert", "50")
     #maxPowerT.pack(side="left")
-    maxPowerT.place(x=400, y=700)
+    maxPowerT.place(x=400, y=540)
     
     idlePowerL = Label(window, width = 9, text="Idle Power")
     #idlePowerL.pack(side="left")
-    idlePowerL.place(x=435, y=700)
+    idlePowerL.place(x=435, y=540)
     idlePowerT = ttk.Entry(window, width = 5, textvariable = idlePower)
     idlePowerT.insert("insert", "30")
     #idlePowerT.pack(side="left")
-    idlePowerT.place(x=500, y=700)
+    idlePowerT.place(x=500, y=540)
 
     timeL = Label(window, width = 10, text="Sim Time")
     #timeL.pack(side="left")
-    timeL.place(x=530, y=700)
+    timeL.place(x=530, y=540)
     timeT = ttk.Entry(window, width = 6, textvariable = time)
     timeT.insert("insert", "3600")
     #timeT.pack(side="left")
-    timeT.place(x=600,y=700)
+    timeT.place(x=600,y=540)
 
     window.mainloop()
     
-    #print(cloudlet.get())
     
-    #sum_of_rewards = critic_train(replayDepth,  imagineEnv, gm)
-    #results[params['name']] = sum_of_rewards
-
-    #matplot lib kne buat semula
-    #plot saloh
-    #plot_result(results, direct=True, k=20)

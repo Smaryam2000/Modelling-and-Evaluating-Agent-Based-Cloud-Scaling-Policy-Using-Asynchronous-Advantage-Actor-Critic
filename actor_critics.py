@@ -10,9 +10,7 @@ from Functional import softmax, log_softmax
 import time
     
 class ActorCritic:
-    """T
-        date : 19 / 04 / 21
-    """
+   
     def __init__(self, env, params):
 
         self.action_space = env.action_space
@@ -45,30 +43,22 @@ class ActorCritic:
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+    #def remember(self, state, action, reward, next_state, done):
+     #   self.memory.append((state, action, reward, next_state, done))
 
-    def act(self, state, imagine_state):
+    def act(self, state, train_state):
         values = self.model.predict(state)
-        act_values = tuple(e1 * e2 for e1, e2 in zip(values[0], imagine_state))
+        act_values = tuple(e1 * e2 for e1, e2 in zip(values[0], train_state))
         return np.argmax(act_values)
 
-    def imagine(self, state):
+    def train(self, state):
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_space)
-        imagine_values = self.model.predict(state)
-        return np.argmax(imagine_values[0])
-        #return imagine_values[0]
+        train_values = self.model.predict(state)
+        return np.argmax(train_values[0])
+        #return train_values[0]
 
 
-    ''' 03 / 06 / 2021            
-    def imagine(self, state):
-        if np.random.rand() <= self.epsilon:
-            imagine_values = self.model.predict(state)
-        imagine_values = self.model.predict(state)
-        return imagine_values[0]
-    '''
-    
     '''
     def act(self, state):
         #if np.random.rand() <= self.epsilon:
@@ -79,7 +69,7 @@ class ActorCritic:
         return np.argmax(act_values[0])
     '''
     
-    def replay(self):
+    def experience(self):
         if len(self.memory) < self.batch_size:
             return
 
@@ -98,7 +88,10 @@ class ActorCritic:
 
         ind = np.array([i for i in range(self.batch_size)])
         targets_full[[ind], [actions]] = targets
-
-        self.model.fit(states, targets_full, epochs=1, verbose=0)
+        try:
+             self.model.fit(states, targets_full, epochs=1, verbose=0)
+        except:
+             self.model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+             self.model.fit(states, targets_full, epochs=1, verbose=0)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay

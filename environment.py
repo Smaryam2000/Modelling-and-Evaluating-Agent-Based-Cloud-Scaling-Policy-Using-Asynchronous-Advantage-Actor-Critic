@@ -5,15 +5,18 @@ import numpy as np
 import gym
 from gym import spaces
 from gym.utils import seeding
+import time
 
 '''
 Update the environment state based on action chosen
 0 = downscale
 1 = upscale
-2 = do nothing
+2 = out
+3 = in
+4 = do nothing
 '''
 
-class ImaginationEnvironment(gym.Env):
+class ExperienceEnvironment(gym.Env):
     power = 0
     max_power = 0
     idle_power = 0
@@ -30,7 +33,7 @@ class ImaginationEnvironment(gym.Env):
     minSLA = 0.0
     
     def __init__(self, value):
-        super(ImaginationEnvironment, self).__init__()
+        super(ExperienceEnvironment, self).__init__()
         
         self.done = False 
         self.seed()
@@ -76,23 +79,25 @@ class ImaginationEnvironment(gym.Env):
         #print("Power : ",self.power)
         #print ("Prev : ",self.energy[self.count]," : ")
         if action == 0 :
-            print ("Scale down")
-            self.power = self.scaleDown()
-            #self.scaleDown();
-        if action == 1 :
-            print ("Scale up")
-            self.power = self.scaleUp()
-            #self.scaleUp();
-        if action == 2 :
-            print ("Scale Out")
+            # print ("Scale out")
             self.power = self.scaleOut()
-            #self.scaleOut();
-        if action == 3 :
-            print ("Scale In")
+            #self.scaleDown();
+        elif action == 1 :
+            # print ("Scale In")
             self.power = self.scaleIn()
             #self.scaleUp();
-        if action == 4 :
-            print ("Do nothing")
+        #elif action == 2 :
+        #    print ("Scale Out")
+        #    self.power = self.scaleOut()
+            #self.scaleOut();
+       # elif action == 3 :
+        #    print ("Scale In")
+         #   self.power = self.scaleIn()
+            #self.scaleUp();
+        else:
+            pass
+            # print ("Do nothing")
+        time.sleep(1)
 
         #print ("Post : ",self.energy[self.count]," : ")
         
@@ -107,24 +112,24 @@ class ImaginationEnvironment(gym.Env):
         # Return the state, reward and done
         return state, self.reward, self.done, {}
 
-    def scaleDown(self):
+   # def scaleDown(self):
         #Bagi Compltee
         #self.power = self.power * 0.8
-        try:
-            temp = self.simulation.scaleDown(self.currentId)
-        except:
-            temp = 0
+    #    try:
+    #       temp = self.simulation.scaleDown(self.currentId)
+    #  except:
+    #     temp = 0
 
-        return temp
+    #   return temp
 
-    def scaleUp(self):
+    # def scaleUp(self):
         #self.power = self.power * 1.2
-        try:
-            temp = self.simulation.scaleUp(self.currentId)
-        except:
-            temp = 0
+     #   try:
+      #      temp = self.simulation.scaleUp(self.currentId)
+       # except:
+        #    temp = 0
 
-        return temp
+       # return temp
 
     def scaleOut(self):
         #self.power = self.power * 1.2
@@ -220,7 +225,7 @@ class ImaginationEnvironment(gym.Env):
     #call agent
 ''
 if __name__ == '__main__':
-    ic = ImaginationEnvironment(10)
+    ic = ExperienceEnvironment(10)
 
     while True:
         print(ic.getPower())
